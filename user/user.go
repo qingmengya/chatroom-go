@@ -128,18 +128,11 @@ func (u *User) handleMessage(messageData []byte) {
 	msg.SetSender(u.Name)
 	msg.SetRoomID(u.roomID)
 
-	// 将消息转换回JSON格式
-	data, err := msg.ToJSON()
-	if err != nil {
-		log.Printf("消息序列化失败: %v\n", err)
-		return
-	}
-
 	// 获取用户当前所在的房间
 	if u.roomID != "" {
 		// 通过RoomManager广播消息
 		if room, exists := roomManager.GetRoom(u.roomID); exists {
-			room.Broadcast(data)
+			room.Broadcast(msg)
 		}
 	}
 }

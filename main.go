@@ -4,7 +4,6 @@ import (
 	"chatroom-go/message"
 	"chatroom-go/room"
 	"chatroom-go/user"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -21,9 +20,7 @@ var (
 			return true // 允许所有来源的WebSocket连接
 		},
 	}
-
-	userManager = user.NewUserManager()
-	roomManager = room.NewRoomManager(userManager)
+	roomManager = room.NewRoomManager()
 )
 
 // handleWebSocket 处理WebSocket连接
@@ -39,6 +36,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("userId")
 	userName := r.URL.Query().Get("userName")
 	roomID := r.URL.Query().Get("roomId")
+
+	userManager := user.NewUserManager()
 
 	if userID == "" || userName == "" || roomID == "" {
 		log.Println("缺少必要的参数")
@@ -81,40 +80,13 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleCreateRoom 处理创建房间的请求
-func handleCreateRoom(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var data struct {
-		RoomID   string `json:"roomId"`
-		RoomName string `json:"roomName"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	room := roomManager.CreateRoom(data.RoomID, data.RoomName, userManager)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"roomId": room.GetID(),
-		"name":   room.GetName(),
-	})
-}
-
 func main() {
 	// 初始化用户管理器和房间管理器
-	userManager = user.NewUserManager()
-	roomManager = room.NewRoomManager(userManager)
+	userManager := user.NewUserManager()
 	user.SetRoomManager(roomManager)
 
 	// 设置路由
 	http.HandleFunc("/ws", handleWebSocket)
-	http.HandleFunc("/room", handleCreateRoom)
 
 	// 提供静态文件服务
 	http.Handle("/", http.FileServer(http.Dir("static")))

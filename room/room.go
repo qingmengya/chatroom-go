@@ -47,8 +47,7 @@ func (r *Room) AddUser(u common.User) error {
 	u.SetRoomID(r.ID)
 
 	// 准备加入消息
-	joinMsg := message.NewMessage(message.UserJoinMessage, u.GetName()+" 加入了房间", "系统", r.ID)
-	joinData, _ := joinMsg.ToJSON()
+	joinMsg := message.NewMessage(message.UserJoinMessage, u.GetName()+" 加入了房间"+r.Name, "系统", r.ID)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -59,7 +58,7 @@ func (r *Room) AddUser(u common.User) error {
 	}
 
 	// 广播消息
-	r.Users.BroadcastMessage(joinData)
+	r.Broadcast(joinMsg)
 	fmt.Println("AddUser", joinMsg)
 
 	return nil
@@ -75,8 +74,7 @@ func (r *Room) RemoveUser(userID string) {
 	if err == nil {
 		// 发送用户离开消息
 		leaveMsg := message.NewMessage(message.UserLeaveMessage, u.GetName()+" 离开了房间", "系统", r.ID)
-		leaveData, _ := leaveMsg.ToJSON()
-		r.Broadcast(leaveData)
+		r.Broadcast(leaveMsg)
 
 		// 移除用户
 		r.Users.RemoveUser(userID)
@@ -84,15 +82,23 @@ func (r *Room) RemoveUser(userID string) {
 }
 
 // Broadcast 广播消息到房间内所有用户
-func (r *Room) Broadcast(msg []byte) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+func (r *Room) Broadcast(msg *message.Message) {
+	//r.mu.Lock()
+	//defer r.mu.Unlock()
+
+	msgData, err := msg.ToJSON()
+	if err != nil {
+		fmt.Println("消息序列化失败: %v\n", err)
+		return
+	}
 
 	// 保存消息到历史记录
-	r.History = append(r.History, msg)
+	if msg.Type == message.TextMessage {
+		r.History = append(r.History, msgData)
+	}
 
 	// 广播消息给所有用户
-	r.Users.BroadcastMessage(msg)
+	r.Users.BroadcastMessage(msgData)
 }
 
 // GetHistory 获取房间的消息历史记录
@@ -103,7 +109,7 @@ func (r *Room) GetHistory() [][]byte {
 }
 
 // NewRoomManager 创建房间管理器
-func NewRoomManager(userManager common.UserManager) *RoomManager {
+func NewRoomManager() *RoomManager {
 	return &RoomManager{}
 }
 

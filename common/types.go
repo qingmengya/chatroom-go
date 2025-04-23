@@ -1,5 +1,7 @@
 package common
 
+import "chatroom-go/message"
+
 // User 定义用户接口
 type User interface {
 	GetID() string
@@ -23,7 +25,7 @@ type Room interface {
 	GetName() string
 	AddUser(user User) error
 	RemoveUser(userID string)
-	Broadcast(msg []byte)
+	Broadcast(msg *message.Message)
 	GetHistory() [][]byte
 }
 
