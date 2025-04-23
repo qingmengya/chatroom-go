@@ -9,7 +9,8 @@ import (
 type MessageType int
 
 const (
-	TextMessage      MessageType = iota // 文本消息
+	HeartbeatMessage MessageType = iota // 心跳消息
+	TextMessage                         // 文本消息
 	SystemMessage                       // 系统消息
 	UserJoinMessage                     // 用户加入消息
 	UserLeaveMessage                    // 用户离开消息

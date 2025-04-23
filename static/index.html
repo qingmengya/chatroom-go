@@ -109,125 +109,144 @@
 </head>
 
 <body>
-    <div class="container" id="loginForm">
-        <div class="login-container">
-            <h2>加入聊天室</h2>
-            <input type="text" id="userNameInput" placeholder="输入你的昵称" required>
-            <input type="text" id="roomIdInput" placeholder="房间ID（可选）" value="default">
-            <button onclick="login()">进入聊天室</button>
-        </div>
+<div class="container" id="loginForm">
+    <div class="login-container">
+        <h2>加入聊天室</h2>
+        <input type="text" id="userNameInput" placeholder="输入你的昵称" required>
+        <input type="text" id="roomIdInput" placeholder="房间ID（可选）" value="default">
+        <button onclick="login()">进入聊天室</button>
     </div>
+</div>
 
-    <div class="container" id="chatRoom" style="display: none;">
-        <div class="chat-header">
-            <h2 id="roomTitle">聊天室</h2>
-        </div>
-        <div class="chat-messages" id="messages"></div>
-        <div class="chat-input">
-            <input type="text" id="messageInput" placeholder="输入消息..." onkeypress="handleKeyPress(event)">
-            <button onclick="sendMessage()">发送</button>
-        </div>
+<div class="container" id="chatRoom" style="display: none;">
+    <div class="chat-header">
+        <h2 id="roomTitle">聊天室</h2>
     </div>
+    <div class="chat-messages" id="messages"></div>
+    <div class="chat-input">
+        <input type="text" id="messageInput" placeholder="输入消息..." onkeypress="handleKeyPress(event)">
+        <button onclick="sendMessage()">发送</button>
+    </div>
+</div>
 
-    <script>
-        let ws;
-        let userId = Math.random().toString(36).substr(2, 9);
-        let userName = '';
-        let roomId = '';
+<script>
+    let ws;
+    let userId = Math.random().toString(36).substr(2, 9);
+    let userName = '';
+    let roomId = '';
 
-        function login() {
-            console.log('login');
-            userName = document.getElementById('userNameInput').value.trim();
-            roomId = document.getElementById('roomIdInput').value.trim() || 'default';
+    function login() {
+        console.log('login');
+        userName = document.getElementById('userNameInput').value.trim();
+        roomId = document.getElementById('roomIdInput').value.trim() || 'default';
 
-            if (!userName) {
-                alert('请输入昵称');
-                return;
-            }
-
-            document.getElementById('loginForm').style.display = 'none';
-            document.getElementById('chatRoom').style.display = 'block';
-            document.getElementById('roomTitle').textContent = `聊天室 - ${roomId}`;
-
-            connectWebSocket();
+        if (!userName) {
+            alert('请输入昵称');
+            return;
         }
 
-        function connectWebSocket() {
-            const wsUrl = `ws://${window.location.host}/ws?userId=${userId}&userName=${encodeURIComponent(userName)}&roomId=${roomId}`;
-            ws = new WebSocket(wsUrl);
+        document.getElementById('loginForm').style.display = 'none';
+        document.getElementById('chatRoom').style.display = 'block';
+        document.getElementById('roomTitle').textContent = `聊天室 - ${roomId}`;
 
-            ws.onmessage = function (event) {
-                console.log(event.data);
-                const message = JSON.parse(event.data);
-                displayMessage(message);
-            };
+        connectWebSocket();
+    }
 
-            ws.onclose = function () {
-                displaySystemMessage('连接已断开，请刷新页面重新连接');
-            };
+    function connectWebSocket() {
+        const wsUrl = `ws://${window.location.host}/ws?userId=${userId}&userName=${encodeURIComponent(userName)}&roomId=${roomId}`;
+        ws = new WebSocket(wsUrl);
 
-            ws.onerror = function () {
-                displaySystemMessage('连接发生错误');
-            };
+        ws.onmessage = function (event) {
+            console.log(event.data);
+            const message = JSON.parse(event.data);
+            displayMessage(message);
+        };
+
+        ws.onclose = function () {
+            displaySystemMessage('连接已断开，请刷新页面重新连接');
+        };
+
+        ws.onerror = function () {
+            displaySystemMessage('连接发生错误');
+        };
+    }
+
+    function displayMessage(message) {
+        const messagesDiv = document.getElementById('messages');
+        const messageDiv = document.createElement('div');
+
+        if (message.type === 0) {
+            heartbeat()
+            return
         }
 
-        function displayMessage(message) {
-            const messagesDiv = document.getElementById('messages');
-            const messageDiv = document.createElement('div');
-
-            if (message.type === 2 || message.type === 3) { // UserJoin or UserLeave
-                messageDiv.className = 'message system';
-                messageDiv.textContent = message.content;
-            } else {
-                messageDiv.className = `message ${message.from === userName ? 'self' : 'other'}`;
-                const sender = document.createElement('div');
-                sender.className = 'sender';
-                sender.textContent = message.from;
-                messageDiv.appendChild(sender);
-
-                const content = document.createElement('div');
-                content.textContent = message.content;
-                messageDiv.appendChild(content);
-            }
-
-            messagesDiv.appendChild(messageDiv);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-
-        function displaySystemMessage(text) {
-            const messagesDiv = document.getElementById('messages');
-            const messageDiv = document.createElement('div');
+        if (message.type === 3 || message.type === 4) { // UserJoin or UserLeave
             messageDiv.className = 'message system';
-            messageDiv.textContent = text;
-            messagesDiv.appendChild(messageDiv);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            messageDiv.textContent = message.content;
+        } else {
+            messageDiv.className = `message ${message.from === userName ? 'self' : 'other'}`;
+            const sender = document.createElement('div');
+            sender.className = 'sender';
+            sender.textContent = message.from;
+            messageDiv.appendChild(sender);
+
+            const content = document.createElement('div');
+            content.textContent = message.content;
+            messageDiv.appendChild(content);
         }
 
-        function sendMessage() {
-            const input = document.getElementById('messageInput');
-            const content = input.value.trim();
+        messagesDiv.appendChild(messageDiv);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
 
-            if (content && ws && ws.readyState === WebSocket.OPEN) {
-                const message = {
-                    type: 0, // TextMessage
-                    content: content,
-                    from: userName,
-                    roomId: roomId,
-                    timestamp: new Date()
-                };
-                console.log(message);
-                ws.send(JSON.stringify(message));
-                input.value = '';
-            }
+    function displaySystemMessage(text) {
+        const messagesDiv = document.getElementById('messages');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message system';
+        messageDiv.textContent = text;
+        messagesDiv.appendChild(messageDiv);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    function sendMessage() {
+        const input = document.getElementById('messageInput');
+        const content = input.value.trim();
+
+        if (content && ws && ws.readyState === WebSocket.OPEN) {
+            const message = {
+                type: 1, // TextMessage
+                content: content,
+                from: userName,
+                roomId: roomId,
+                timestamp: new Date()
+            };
+            console.log(message);
+            ws.send(JSON.stringify(message));
+            input.value = '';
         }
+    }
 
-
-        function handleKeyPress(event) {
-            if (event.keyCode === 13) { // Enter key
-                sendMessage();
-            }
+    function heartbeat() {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            const message = {
+                type: 0,
+                content: "",
+                from: userName,
+                roomId: roomId,
+                timestamp: new Date()
+            };
+            console.log('heartbeat pong')
+            ws.send(JSON.stringify(message));
         }
-    </script>
+    }
+
+
+    function handleKeyPress(event) {
+        if (event.keyCode === 13) { // Enter key
+            sendMessage();
+        }
+    }
+</script>
 </body>
 
 </html>

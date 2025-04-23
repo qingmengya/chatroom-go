@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -14,13 +15,22 @@ import (
 var roomManager *room.RoomManager
 
 // User 实现common.User接口
+// 心跳相关常量
+const (
+	heartbeatInterval = 10 * time.Second // 心跳间隔
+	heartbeatTimeout  = 3                // 心跳超时次数
+)
+
 type User struct {
-	ID       string          // 用户唯一标识
-	Name     string          // 用户名称
-	Conn     *websocket.Conn // WebSocket连接
-	roomID   string          // 当前所在房间ID
-	msgChan  chan []byte     // 消息通道
-	quitChan chan struct{}   // 退出信号通道
+	ID              string          // 用户唯一标识
+	Name            string          // 用户名称
+	Conn            *websocket.Conn // WebSocket连接
+	roomID          string          // 当前所在房间ID
+	msgChan         chan []byte     // 消息通道
+	quitChan        chan struct{}   // 退出信号通道
+	lastHeartbeat   time.Time       // 最后一次心跳时间
+	heartbeatFailed int             // 心跳失败次数
+	heartbeatMu     sync.Mutex      // 心跳相关的互斥锁
 }
 
 // UserManager 用户管理器
@@ -32,11 +42,12 @@ type UserManager struct {
 // NewUser 创建新用户
 func NewUser(id, name string, conn *websocket.Conn) *User {
 	return &User{
-		ID:       id,
-		Name:     name,
-		Conn:     conn,
-		msgChan:  make(chan []byte, 100),
-		quitChan: make(chan struct{}),
+		ID:            id,
+		Name:          name,
+		Conn:          conn,
+		msgChan:       make(chan []byte, 100),
+		quitChan:      make(chan struct{}),
+		lastHeartbeat: time.Now(),
 	}
 }
 
@@ -86,13 +97,28 @@ func (u *User) readPump() {
 		u.Conn.Close()
 	}()
 
-	for {
-		_, message, err := u.Conn.ReadMessage()
-		if err != nil {
-			break
+	// 启动心跳检测
+	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
+
+	go func() {
+		for range ticker.C {
+			u.checkHeartbeat()
 		}
-		// 处理接收到的消息
-		u.handleMessage(message)
+	}()
+
+	for {
+		select {
+		case <-u.quitChan:
+			return
+		default:
+			_, message, err := u.Conn.ReadMessage()
+			if err != nil {
+				break
+			}
+			// 处理接收到的消息
+			u.handleMessage(message)
+		}
 	}
 }
 
@@ -102,10 +128,26 @@ func (u *User) writePump() {
 		u.Conn.Close()
 	}()
 
+	// 启动心跳发送
+	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case message := <-u.msgChan:
 			err := u.Conn.WriteMessage(websocket.TextMessage, message)
+			if err != nil {
+				return
+			}
+		case <-ticker.C:
+			// 发送心跳消息
+			heartbeatMsg := message.NewMessage(message.HeartbeatMessage, "", u.Name, u.roomID)
+			msgData, err := heartbeatMsg.ToJSON()
+			if err != nil {
+				log.Printf("心跳消息序列化失败: %v\n", err)
+				continue
+			}
+			err = u.Conn.WriteMessage(websocket.TextMessage, msgData)
 			if err != nil {
 				return
 			}
@@ -124,6 +166,12 @@ func (u *User) handleMessage(messageData []byte) {
 		return
 	}
 
+	// 处理心跳消息
+	if msg.Type == message.HeartbeatMessage {
+		u.handleHeartbeat()
+		return
+	}
+
 	// 设置消息的发送者和房间ID
 	msg.SetSender(u.Name)
 	msg.SetRoomID(u.roomID)
@@ -133,6 +181,35 @@ func (u *User) handleMessage(messageData []byte) {
 		// 通过RoomManager广播消息
 		if room, exists := roomManager.GetRoom(u.roomID); exists {
 			room.Broadcast(msg)
+		}
+	}
+}
+
+// handleHeartbeat 处理心跳消息
+func (u *User) handleHeartbeat() {
+	u.heartbeatMu.Lock()
+	defer u.heartbeatMu.Unlock()
+
+	u.lastHeartbeat = time.Now()
+	u.heartbeatFailed = 0
+}
+
+// checkHeartbeat 检查心跳状态
+func (u *User) checkHeartbeat() {
+	u.heartbeatMu.Lock()
+	defer u.heartbeatMu.Unlock()
+
+	if time.Since(u.lastHeartbeat) > heartbeatInterval {
+		u.heartbeatFailed++
+		if u.heartbeatFailed >= heartbeatTimeout {
+			// 心跳超时，从房间中移除用户
+			if u.roomID != "" {
+				if room, exists := roomManager.GetRoom(u.roomID); exists {
+					room.RemoveUser(u.ID)
+				}
+			}
+			// 关闭连接
+			u.Stop()
 		}
 	}
 }
