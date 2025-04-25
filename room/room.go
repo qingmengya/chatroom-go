@@ -3,7 +3,7 @@ package room
 import (
 	"chatroom-go/common"
 	"chatroom-go/message"
-	"fmt"
+	"log"
 	"sync"
 )
 
@@ -47,7 +47,7 @@ func (r *Room) AddUser(u common.User) error {
 	u.SetRoomID(r.ID)
 
 	// 准备加入消息
-	joinMsg := message.NewMessage(message.UserJoinMessage, u.GetName()+" 加入了房间"+r.Name, "系统", r.ID)
+	joinMsg := message.NewMessage(message.UserJoinMessage, u.GetName()+" 加入了房间"+r.Name, u.GetID(), r.ID)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -59,7 +59,7 @@ func (r *Room) AddUser(u common.User) error {
 
 	// 广播消息
 	r.Broadcast(joinMsg)
-	fmt.Println("AddUser", joinMsg)
+	log.Println("AddUser", joinMsg)
 
 	return nil
 }
@@ -88,7 +88,7 @@ func (r *Room) Broadcast(msg *message.Message) {
 
 	msgData, err := msg.ToJSON()
 	if err != nil {
-		fmt.Println("消息序列化失败: %v\n", err)
+		log.Println("消息序列化失败: %v\n", err)
 		return
 	}
 

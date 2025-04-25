@@ -13,6 +13,7 @@ import (
 )
 
 var roomManager *room.RoomManager
+var userManager common.UserManager
 
 // User 实现common.User接口
 // 心跳相关常量
@@ -37,6 +38,50 @@ type User struct {
 type UserManager struct {
 	users sync.Map // 存储所有在线用户
 	mu    sync.RWMutex
+}
+
+// SendPrivateMessage 发送私聊消息
+func (u *User) SendPrivateMessage(content, toUserID string) {
+	// 创建私聊消息
+	msg := message.NewPrivateMessage(content, u.Name, toUserID, u.roomID)
+
+	// 发送给接收者
+	if toUser, err := userManager.GetUser(toUserID); err == nil {
+		msgData, err := msg.ToJSON()
+		if err != nil {
+			log.Printf("私聊消息序列化失败: %v\n", err)
+			return
+		}
+		toUser.SendMessage(msgData)
+
+		// 同时发送给自己，以便在自己的界面上显示
+		u.SendMessage(msgData)
+	} else {
+		log.Printf("私聊消息发送失败，用户 %s 不存在\n", toUserID)
+	}
+}
+
+// handlePrivateMessage 处理私聊消息
+func (u *User) handlePrivateMessage(msg *message.Message) {
+	// 获取接收者用户
+	toUser, err := userManager.GetUser(msg.To)
+	if err != nil {
+		log.Printf("私聊消息发送失败，用户 %s 不存在\n", msg.To)
+		return
+	}
+
+	// 序列化消息
+	msgData, err := msg.ToJSON()
+	if err != nil {
+		log.Printf("私聊消息序列化失败: %v\n", err)
+		return
+	}
+
+	// 发送给接收者
+	toUser.SendMessage(msgData)
+
+	// 同时发送给自己，以便在自己的界面上显示
+	u.SendMessage(msgData)
 }
 
 // NewUser 创建新用户
@@ -75,11 +120,19 @@ func (u *User) SetRoomID(roomID string) {
 func (u *User) Start() {
 	go u.readPump()
 	go u.writePump()
+	go u.checkHeartbeat()
 }
 
 // Stop 停止用户的消息处理
 func (u *User) Stop() {
+	// 从房间中移除用户
+	if u.roomID != "" {
+		if r, exists := roomManager.GetRoom(u.roomID); exists {
+			r.RemoveUser(u.ID)
+		}
+	}
 	close(u.quitChan)
+	log.Printf("用户 %s 调用 Stop 方法，退出房间！", u.Name)
 }
 
 // SendMessage 发送消息给用户
@@ -97,27 +150,22 @@ func (u *User) readPump() {
 		u.Conn.Close()
 	}()
 
-	// 启动心跳检测
-	ticker := time.NewTicker(heartbeatInterval)
-	defer ticker.Stop()
-
-	go func() {
-		for range ticker.C {
-			u.checkHeartbeat()
-		}
-	}()
-
 	for {
 		select {
 		case <-u.quitChan:
+			log.Printf("用户 %s 停止消息读取处理\n", u.Name)
 			return
 		default:
-			_, message, err := u.Conn.ReadMessage()
+			_, msgData, err := u.Conn.ReadMessage()
 			if err != nil {
-				break
+				log.Printf("WebSocket读取错误: %v，用户 %s 断开连接", err, u.Name)
+				if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					u.Stop()
+					return
+				}
 			}
 			// 处理接收到的消息
-			u.handleMessage(message)
+			u.handleMessage(msgData)
 		}
 	}
 }
@@ -134,10 +182,10 @@ func (u *User) writePump() {
 
 	for {
 		select {
-		case message := <-u.msgChan:
-			err := u.Conn.WriteMessage(websocket.TextMessage, message)
+		case msgData := <-u.msgChan:
+			err := u.Conn.WriteMessage(websocket.TextMessage, msgData)
 			if err != nil {
-				return
+				log.Printf("WebSocket写入错误: %v，用户 %s\n", err, u.Name)
 			}
 		case <-ticker.C:
 			// 发送心跳消息
@@ -152,6 +200,7 @@ func (u *User) writePump() {
 				return
 			}
 		case <-u.quitChan:
+			log.Printf("用户 %s 停止消息写入处理\n", u.Name)
 			return
 		}
 	}
@@ -176,11 +225,17 @@ func (u *User) handleMessage(messageData []byte) {
 	msg.SetSender(u.Name)
 	msg.SetRoomID(u.roomID)
 
+	// 处理私聊消息
+	if msg.Type == message.PrivateMessage && msg.To != "" {
+		u.handlePrivateMessage(msg)
+		return
+	}
+
 	// 获取用户当前所在的房间
 	if u.roomID != "" {
 		// 通过RoomManager广播消息
-		if room, exists := roomManager.GetRoom(u.roomID); exists {
-			room.Broadcast(msg)
+		if r, exists := roomManager.GetRoom(u.roomID); exists {
+			r.Broadcast(msg)
 		}
 	}
 }
@@ -196,22 +251,26 @@ func (u *User) handleHeartbeat() {
 
 // checkHeartbeat 检查心跳状态
 func (u *User) checkHeartbeat() {
-	u.heartbeatMu.Lock()
-	defer u.heartbeatMu.Unlock()
+	// 启动心跳检测
+	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
 
-	if time.Since(u.lastHeartbeat) > heartbeatInterval {
-		u.heartbeatFailed++
-		if u.heartbeatFailed >= heartbeatTimeout {
-			// 心跳超时，从房间中移除用户
-			if u.roomID != "" {
-				if room, exists := roomManager.GetRoom(u.roomID); exists {
-					room.RemoveUser(u.ID)
+	for {
+		select {
+		case <-ticker.C:
+			if time.Since(u.lastHeartbeat) > heartbeatInterval {
+				u.heartbeatFailed++
+				if u.heartbeatFailed >= heartbeatTimeout {
+					// 关闭连接
+					u.Stop()
 				}
 			}
-			// 关闭连接
-			u.Stop()
+		case <-u.quitChan:
+			log.Printf("用户 %s 停止心跳检测\n", u.Name)
+			return
 		}
 	}
+
 }
 
 // NewUserManager 创建用户管理器
@@ -222,6 +281,11 @@ func NewUserManager() common.UserManager {
 // SetRoomManager 设置房间管理器
 func SetRoomManager(rm *room.RoomManager) {
 	roomManager = rm
+}
+
+// SetUserManager 设置用户管理器
+func SetUserManager(um common.UserManager) {
+	userManager = um
 }
 
 // AddUser 添加用户
@@ -246,6 +310,7 @@ func (um *UserManager) RemoveUser(userID string) {
 // GetUser 获取用户
 func (um *UserManager) GetUser(userID string) (common.User, error) {
 	user, exists := um.users.Load(userID)
+
 	if !exists {
 		return nil, errors.New("user not found")
 	}

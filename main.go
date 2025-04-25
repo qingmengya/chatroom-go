@@ -66,7 +66,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	u.Start()
 
 	// 发送欢迎消息
-	welcomeMsg := message.NewMessage(message.SystemMessage, "欢迎来到聊天室！", "系统", roomID)
+	welcomeMsg := message.NewMessage(message.SystemMessage, "欢迎来到聊天室！", "system", roomID)
 	if welcomeData, err := welcomeMsg.ToJSON(); err == nil {
 		u.SendMessage(welcomeData)
 	} else {
@@ -84,6 +84,7 @@ func main() {
 	// 初始化用户管理器和房间管理器
 	userManager := user.NewUserManager()
 	user.SetRoomManager(roomManager)
+	user.SetUserManager(userManager)
 
 	// 设置路由
 	http.HandleFunc("/ws", handleWebSocket)

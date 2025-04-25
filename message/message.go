@@ -14,6 +14,7 @@ const (
 	SystemMessage                       // 系统消息
 	UserJoinMessage                     // 用户加入消息
 	UserLeaveMessage                    // 用户离开消息
+	PrivateMessage                      // 私聊消息
 )
 
 // Message 定义消息的基本结构
@@ -21,6 +22,7 @@ type Message struct {
 	Type      MessageType `json:"type"`      // 消息类型
 	Content   string      `json:"content"`   // 消息内容
 	From      string      `json:"from"`      // 发送者
+	To        string      `json:"to"`        // 接收者（用于私聊）
 	Timestamp time.Time   `json:"timestamp"` // 发送时间
 	RoomID    string      `json:"roomId"`    // 房间ID
 }
@@ -36,6 +38,18 @@ func NewMessage(msgType MessageType, content, from, roomID string) *Message {
 		Type:      msgType,
 		Content:   content,
 		From:      from,
+		Timestamp: time.Now(),
+		RoomID:    roomID,
+	}
+}
+
+// NewPrivateMessage 创建私聊消息
+func NewPrivateMessage(content, from, to, roomID string) *Message {
+	return &Message{
+		Type:      PrivateMessage,
+		Content:   content,
+		From:      from,
+		To:        to,
 		Timestamp: time.Now(),
 		RoomID:    roomID,
 	}
